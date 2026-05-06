@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Spack GitHub Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg:      #0d1117;
+      --surface: #161b22;
+      --border:  #30363d;
+      --text:    #e6edf3;
+      --muted:   #8b949e;
+      --blue:    #58a6ff;
+      --orange:  #f0883e;
+      --green:   #3fb950;
+      --red:     #f85149;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+      padding: 2rem 2.5rem;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    a { color: var(--blue); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    header { margin-bottom: 2rem; }
+    header h1 { font-size: 1.75rem; font-weight: 700; }
+    header p { color: var(--muted); margin-top: 0.4rem; font-size: 0.95rem; }
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 1rem;
+      margin-bottom: 2rem;
+    }
+    .stat-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.25rem 1.5rem;
+    }
+    .stat-card .label {
+      font-size: 0.72rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      font-weight: 600;
+    }
+    .stat-card .value {
+      font-size: 2.4rem;
+      font-weight: 700;
+      margin-top: 0.25rem;
+      line-height: 1.1;
+    }
+    .stat-card .repo {
+      font-size: 0.78rem;
+      color: var(--muted);
+      margin-top: 0.35rem;
+    }
+    .chart-section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.5rem 1.75rem;
+      margin-bottom: 1.5rem;
+    }
+    .chart-section h2 {
+      font-size: 1rem;
+      font-weight: 600;
+      margin-bottom: 1.25rem;
+      color: var(--text);
+    }
+    .chart-wrapper { position: relative; height: 320px; }
+    footer {
+      color: var(--muted);
+      font-size: 0.8rem;
+      text-align: right;
+      margin-top: 0.5rem;
+    }
+    .placeholder {
+      color: var(--muted);
+      font-size: 0.9rem;
+      padding: 3rem;
+      text-align: center;
+    }
+    .error-box {
+      color: var(--red);
+      background: rgba(248,81,73,0.08);
+      border: 1px solid rgba(248,81,73,0.3);
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+      font-size: 0.9rem;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>🚀 Spack GitHub Dashboard</h1>
+  <p>
+    Issue and pull-request trends for
+    <a href="https://github.com/spack/spack">spack/spack</a> and
+    <a href="https://github.com/spack/spack-packages">spack/spack-packages</a> —
+    updated weekly via GitHub Actions.
+  </p>
+</header>
+
+<div id="stats-grid" class="stats-grid">
+  <div class="placeholder">Loading data…</div>
+</div>
+
+<div class="chart-section">
+  <h2>📈 Open Issues Over Time &nbsp;<span style="font-weight:400;color:var(--muted);font-size:0.85rem">(weekly snapshots, past 6 months)</span></h2>
+  <div class="chart-wrapper"><canvas id="issues-chart"></canvas></div>
+</div>
+
+<div class="chart-section">
+  <h2>🔀 Open Pull Requests Over Time &nbsp;<span style="font-weight:400;color:var(--muted);font-size:0.85rem">(weekly snapshots, past 6 months)</span></h2>
+  <div class="chart-wrapper"><canvas id="prs-chart"></canvas></div>
+</div>
+
+<footer id="footer"></footer>
+
+<script>
+const REPO_COLORS = {
+  'spack/spack':          '#58a6ff',
+  'spack/spack-packages': '#f0883e',
+};
+
+const SCALE_OPTS = {
+  x: { ticks: { color: '#8b949e', maxRotation: 45, autoSkip: true, maxTicksLimit: 14 },
+       grid: { color: '#21262d' } },
+  y: { ticks: { color: '#8b949e' },
+       grid: { color: '#21262d' },
+       beginAtZero: false },
+};
+
+function fmtDate(iso) {
+  return new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+function renderStats(data) {
+  const grid = document.getElementById('stats-grid');
+  grid.innerHTML = '';
+  for (const [repo, d] of Object.entries(data)) {
+    const c = REPO_COLORS[repo] || '#58a6ff';
+    grid.insertAdjacentHTML('beforeend', `
+      <div class="stat-card">
+        <div class="label">Open Issues</div>
+        <div class="value" style="color:${c}">${(d.current_open_issues ?? '—').toLocaleString()}</div>
+        <div class="repo">${repo}</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Open Pull Requests</div>
+        <div class="value" style="color:${c}">${(d.current_open_prs ?? '—').toLocaleString()}</div>
+        <div class="repo">${repo}</div>
+      </div>
+    `);
+  }
+}
+
+function buildChart(canvasId, data, key) {
+  const entries = Object.entries(data);
+  if (!entries.length || !entries[0][1].dates?.length) return;
+  const labels = entries[0][1].dates.map(fmtDate);
+  const datasets = entries.map(([repo, d]) => ({
+    label: repo,
+    data: d[key],
+    borderColor: REPO_COLORS[repo] || '#58a6ff',
+    backgroundColor: (REPO_COLORS[repo] || '#58a6ff') + '18',
+    fill: true,
+    tension: 0.35,
+    pointRadius: 2,
+    pointHoverRadius: 5,
+    borderWidth: 2,
+  }));
+  new Chart(document.getElementById(canvasId), {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { labels: { color: '#e6edf3', boxWidth: 14 } } },
+      scales: SCALE_OPTS,
+    },
+  });
+}
+
+(async () => {
+  try {
+    const resp = await fetch('data/dashboard.json');
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+
+    const firstRepo = Object.values(data)[0];
+    const hasDates = firstRepo?.dates?.length > 0;
+
+    if (!hasDates) {
+      document.getElementById('stats-grid').innerHTML = `
+        <div class="error-box">
+          Dashboard data has not been generated yet.<br>
+          Check the <strong>Actions</strong> tab of this repository — the
+          <em>Update Dashboard Data</em> workflow should be running or scheduled.
+        </div>`;
+      return;
+    }
+
+    renderStats(data);
+    buildChart('issues-chart', data, 'open_issues');
+    buildChart('prs-chart', data, 'open_prs');
+
+    if (firstRepo.updated_at) {
+      document.getElementById('footer').textContent =
+        `Last updated: ${new Date(firstRepo.updated_at).toLocaleString()}`;
+    }
+  } catch (e) {
+    document.getElementById('stats-grid').innerHTML =
+      `<div class="error-box">Failed to load data/dashboard.json: ${e.message}</div>`;
+  }
+})();
+</script>
+</body>
+</html>
