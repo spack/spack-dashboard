@@ -3,115 +3,156 @@
 Fetch weekly open-issue and open-PR counts for tracked repositories
 and write data/dashboard.json for the GitHub Pages dashboard.
 
-Uses only the stdlib so no pip install is needed.
-Rate-limited to stay within GitHub Search API's 30 req/min cap.
+Uses the GitHub GraphQL API so all ~216 search counts are batched into
+a handful of HTTP requests, avoiding the REST Search API's 30 req/min
+rate limit that caused 403 errors.
+
+Uses only the stdlib — no pip install needed.
 """
 
 import json
 import os
 import time
-import urllib.parse
 import urllib.request
 from datetime import date, datetime, timedelta
 
 REPOS = ["spack/spack", "spack/spack-packages"]
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
-SEARCH_URL = "https://api.github.com/search/issues"
-# 3 s sleep → 20 req/min, comfortably under the 30/min search limit
-# and avoids the secondary abuse-detection rate limit
-SLEEP = 3.0
-MAX_RETRIES = 5
+GRAPHQL_URL = "https://api.github.com/graphql"
+# Keep each batch well under GitHub's per-request complexity limit.
+# 50 search aliases × ~7 pts each ≈ 350 pts (limit is 500 000).
+BATCH_SIZE = 50
 
 
-def gh_request(url: str, params: dict | None = None) -> dict:
-    if params:
-        url = url + "?" + urllib.parse.urlencode(params)
-    req = urllib.request.Request(url)
+# ---------------------------------------------------------------------------
+# GraphQL helpers
+# ---------------------------------------------------------------------------
+
+def graphql_request(query: str) -> dict:
+    payload = json.dumps({"query": query}).encode()
+    req = urllib.request.Request(GRAPHQL_URL, data=payload, method="POST")
     req.add_header("Authorization", f"Bearer {GITHUB_TOKEN}")
-    req.add_header("Accept", "application/vnd.github+json")
+    req.add_header("Content-Type", "application/json")
     req.add_header("X-GitHub-Api-Version", "2022-11-28")
-    for attempt in range(MAX_RETRIES):
-        try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                return json.loads(resp.read())
-        except urllib.error.HTTPError as exc:
-            if exc.code in (403, 429) and attempt < MAX_RETRIES - 1:
-                wait = SLEEP * (2 ** attempt) + 10
-                print(f"    [{exc.code}] rate-limited; retrying in {wait:.0f}s …", flush=True)
-                time.sleep(wait)
-            else:
-                raise
-    raise RuntimeError("Max retries exceeded")  # unreachable
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        data = json.loads(resp.read())
+    if "errors" in data:
+        raise RuntimeError(f"GraphQL errors: {data['errors']}")
+    return data["data"]
 
 
-def search_count(query: str) -> int:
-    result = gh_request(SEARCH_URL, {"q": query, "per_page": 1})
-    count = result["total_count"]
-    time.sleep(SLEEP)
-    return count
-
-
-def open_count_at(repo: str, item_type: str, snapshot: str) -> int:
+def fetch_counts(aliases_and_queries: list[tuple[str, str]]) -> dict[str, int]:
     """
-    Estimate the number of open issues/PRs in `repo` on `snapshot` (ISO date).
-
-    Open at T means: created <= T AND (still open  OR  closed > T).
-    Two search queries cover both halves:
-      q1: currently open, created on or before T
-      q2: closed after T, created on or before T
+    Send batched GraphQL requests and return {alias: issueCount}.
+    Each alias maps to one GitHub search string.
     """
-    t = f"is:{item_type}"
-    q1 = f"repo:{repo} {t} is:open  created:<={snapshot}"
-    q2 = f"repo:{repo} {t} is:closed closed:>{snapshot} created:<={snapshot}"
-    return search_count(q1) + search_count(q2)
+    results: dict[str, int] = {}
+    for start in range(0, len(aliases_and_queries), BATCH_SIZE):
+        batch = aliases_and_queries[start : start + BATCH_SIZE]
+        # Build: { alias: search(query: "...", type: ISSUE) { issueCount } }
+        body = "\n".join(
+            f'  {alias}: search(query: {json.dumps(q)}, type: ISSUE) {{ issueCount }}'
+            for alias, q in batch
+        )
+        gql = "{\n" + body + "\n}"
+        print(f"  batch {start // BATCH_SIZE + 1}: {len(batch)} queries … ", end="", flush=True)
+        data = graphql_request(gql)
+        for alias, _ in batch:
+            results[alias] = data[alias]["issueCount"]
+        print("done")
+        if start + BATCH_SIZE < len(aliases_and_queries):
+            time.sleep(1)   # brief pause between batches
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Data collection
+# ---------------------------------------------------------------------------
+
+def repo_key(repo: str) -> str:
+    """Safe GraphQL alias prefix from repo name (must match [_A-Za-z][_0-9A-Za-z]*)."""
+    return repo.replace("/", "_").replace("-", "_")
 
 
 def weekly_dates(weeks: int = 26) -> list[str]:
     today = date.today()
-    start = today - timedelta(weeks=weeks)
-    dates = []
-    d = start
+    d = today - timedelta(weeks=weeks)
+    dates: list[str] = []
     while d <= today:
         dates.append(d.isoformat())
         d += timedelta(weeks=1)
     return dates
 
 
-def main() -> None:
-    dates = weekly_dates(26)
-    all_data: dict = {}
+def build_queries(repos: list[str], dates: list[str]) -> list[tuple[str, str]]:
+    """
+    For each repo × item_type × snapshot date we need two counts:
+      open_i  : is:open created<=snapshot          (still open today, created before T)
+      closed_i: is:closed closed>snapshot created<=snapshot  (closed after T → was open at T)
+    Plus one current-count query per repo × item_type.
+    Total: 2 repos × 2 types × 26 dates × 2 halves + 2 repos × 2 types × 1 = 216 queries.
+    """
+    queries: list[tuple[str, str]] = []
+    for repo in repos:
+        rk = repo_key(repo)
+        for kind, type_filter in [("issue", "is:issue"), ("pr", "is:pr")]:
+            for i, snap in enumerate(dates):
+                queries.append((
+                    f"{rk}_{kind}_open_{i}",
+                    f"repo:{repo} {type_filter} is:open created:<={snap}",
+                ))
+                queries.append((
+                    f"{rk}_{kind}_closed_{i}",
+                    f"repo:{repo} {type_filter} is:closed closed:>{snap} created:<={snap}",
+                ))
+            queries.append((
+                f"{rk}_{kind}_current",
+                f"repo:{repo} {type_filter} is:open",
+            ))
+    return queries
 
-    for repo in REPOS:
-        print(f"\n── {repo} ──")
-        issues: list[int] = []
-        prs: list[int] = []
 
-        for snapshot in dates:
-            print(f"  {snapshot}", end="", flush=True)
-            n_issues = open_count_at(repo, "issue", snapshot)
-            n_prs    = open_count_at(repo, "pr",    snapshot)
-            issues.append(n_issues)
-            prs.append(n_prs)
-            print(f"  issues={n_issues}  prs={n_prs}")
-
-        current_issues = search_count(f"repo:{repo} is:issue is:open")
-        current_prs    = search_count(f"repo:{repo} is:pr    is:open")
-        print(f"  current  issues={current_issues}  prs={current_prs}")
-
-        all_data[repo] = {
+def assemble(repos: list[str], dates: list[str], counts: dict[str, int]) -> dict:
+    result: dict = {}
+    for repo in repos:
+        rk = repo_key(repo)
+        open_issues = [
+            counts[f"{rk}_issue_open_{i}"] + counts[f"{rk}_issue_closed_{i}"]
+            for i in range(len(dates))
+        ]
+        open_prs = [
+            counts[f"{rk}_pr_open_{i}"] + counts[f"{rk}_pr_closed_{i}"]
+            for i in range(len(dates))
+        ]
+        result[repo] = {
             "dates":               dates,
-            "open_issues":         issues,
-            "open_prs":            prs,
-            "current_open_issues": current_issues,
-            "current_open_prs":    current_prs,
+            "open_issues":         open_issues,
+            "open_prs":            open_prs,
+            "current_open_issues": counts[f"{rk}_issue_current"],
+            "current_open_prs":    counts[f"{rk}_pr_current"],
             "updated_at":          datetime.utcnow().isoformat() + "Z",
         }
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+def main() -> None:
+    dates = weekly_dates(26)
+    queries = build_queries(REPOS, dates)
+    print(f"Fetching {len(queries)} counts across {-(-len(queries) // BATCH_SIZE)} batches …")
+    counts = fetch_counts(queries)
+    all_data = assemble(REPOS, dates, counts)
 
     os.makedirs("data", exist_ok=True)
     out = "data/dashboard.json"
     with open(out, "w") as f:
         json.dump(all_data, f, indent=2)
     print(f"\nWrote {out}")
+    for repo, d in all_data.items():
+        print(f"  {repo}: {d['current_open_issues']} open issues, {d['current_open_prs']} open PRs")
 
 
 if __name__ == "__main__":
