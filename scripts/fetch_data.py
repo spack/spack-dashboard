@@ -17,8 +17,10 @@ from datetime import date, datetime, timedelta
 REPOS = ["spack/spack", "spack/spack-packages"]
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 SEARCH_URL = "https://api.github.com/search/issues"
-# 2.1 s sleep → ~28 req/min, safely under the 30/min search limit
-SLEEP = 2.1
+# 3 s sleep → 20 req/min, comfortably under the 30/min search limit
+# and avoids the secondary abuse-detection rate limit
+SLEEP = 3.0
+MAX_RETRIES = 5
 
 
 def gh_request(url: str, params: dict | None = None) -> dict:
@@ -28,8 +30,18 @@ def gh_request(url: str, params: dict | None = None) -> dict:
     req.add_header("Authorization", f"Bearer {GITHUB_TOKEN}")
     req.add_header("Accept", "application/vnd.github+json")
     req.add_header("X-GitHub-Api-Version", "2022-11-28")
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return json.loads(resp.read())
+    for attempt in range(MAX_RETRIES):
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return json.loads(resp.read())
+        except urllib.error.HTTPError as exc:
+            if exc.code in (403, 429) and attempt < MAX_RETRIES - 1:
+                wait = SLEEP * (2 ** attempt) + 10
+                print(f"    [{exc.code}] rate-limited; retrying in {wait:.0f}s …", flush=True)
+                time.sleep(wait)
+            else:
+                raise
+    raise RuntimeError("Max retries exceeded")  # unreachable
 
 
 def search_count(query: str) -> int:
