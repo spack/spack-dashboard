@@ -193,7 +193,7 @@ function buildChart(canvasId, data, key) {
 
 (async () => {
   try {
-    const resp = await fetch('data/dashboard.json');
+    const resp = await fetch(`data/dashboard.json?t=${Date.now()}`);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
 
