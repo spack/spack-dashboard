@@ -74,7 +74,21 @@
       margin-bottom: 1.25rem;
       color: var(--text);
     }
-    .chart-wrapper { position: relative; height: 320px; }
+    .chart-wrapper { position: relative; height: 300px; }
+    .project-charts {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+    }
+    @media (max-width: 720px) {
+      .project-charts { grid-template-columns: 1fr; }
+    }
+    .chart-subtitle {
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: var(--muted);
+      margin-bottom: 0.9rem;
+    }
     footer {
       color: var(--muted);
       font-size: 0.8rem;
@@ -113,15 +127,7 @@
   <div class="placeholder">Loading data…</div>
 </div>
 
-<div class="chart-section">
-  <h2>📈 Open Issues Over Time &nbsp;<span style="font-weight:400;color:var(--muted);font-size:0.85rem">(weekly snapshots, past 6 months)</span></h2>
-  <div class="chart-wrapper"><canvas id="issues-chart"></canvas></div>
-</div>
-
-<div class="chart-section">
-  <h2>🔀 Open Pull Requests Over Time &nbsp;<span style="font-weight:400;color:var(--muted);font-size:0.85rem">(weekly snapshots, past 6 months)</span></h2>
-  <div class="chart-wrapper"><canvas id="prs-chart"></canvas></div>
-</div>
+<div id="charts-container"></div>
 
 <footer id="footer"></footer>
 
@@ -160,6 +166,34 @@ function renderStats(data) {
         <div class="repo">${repo}</div>
       </div>
     `);
+  }
+}
+
+function buildProjectCharts(data) {
+  const container = document.getElementById('charts-container');
+  for (const [repo, d] of Object.entries(data)) {
+    if (!d.dates?.length) continue;
+    const repoId = repo.replace(/\//g, '-');
+    const color = REPO_COLORS[repo] || '#58a6ff';
+    container.insertAdjacentHTML('beforeend', `
+      <div class="chart-section">
+        <h2><a href="https://github.com/${repo}" style="color:${color}">${repo}</a>
+          <span style="font-weight:400;color:var(--muted);font-size:0.8rem">&nbsp;— weekly snapshots, past 6 months</span>
+        </h2>
+        <div class="project-charts">
+          <div>
+            <div class="chart-subtitle">📈 Open Issues Over Time</div>
+            <div class="chart-wrapper"><canvas id="${repoId}-issues-chart"></canvas></div>
+          </div>
+          <div>
+            <div class="chart-subtitle">🔀 Open Pull Requests Over Time</div>
+            <div class="chart-wrapper"><canvas id="${repoId}-prs-chart"></canvas></div>
+          </div>
+        </div>
+      </div>
+    `);
+    buildChart(`${repoId}-issues-chart`, { [repo]: d }, 'open_issues');
+    buildChart(`${repoId}-prs-chart`, { [repo]: d }, 'open_prs');
   }
 }
 
@@ -211,8 +245,7 @@ function buildChart(canvasId, data, key) {
     }
 
     renderStats(data);
-    buildChart('issues-chart', data, 'open_issues');
-    buildChart('prs-chart', data, 'open_prs');
+    buildProjectCharts(data);
 
     if (firstRepo.updated_at) {
       document.getElementById('footer').textContent =
