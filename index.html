@@ -192,12 +192,12 @@ function buildProjectCharts(data) {
         </div>
       </div>
     `);
-    buildChart(`${repoId}-issues-chart`, { [repo]: d }, 'open_issues', 'resolved_issues');
-    buildChart(`${repoId}-prs-chart`, { [repo]: d }, 'open_prs', 'merged_prs');
+    buildChart(`${repoId}-issues-chart`, { [repo]: d }, 'open_issues', 'resolved_issues', 'resolved');
+    buildChart(`${repoId}-prs-chart`, { [repo]: d }, 'open_prs', 'merged_prs', 'merged');
   }
 }
 
-function buildChart(canvasId, data, lineKey, barKey) {
+function buildChart(canvasId, data, lineKey, barKey, barLabel) {
   const entries = Object.entries(data);
   if (!entries.length || !entries[0][1].dates?.length) return;
   const labels = entries[0][1].dates.map(fmtDate);
@@ -219,7 +219,7 @@ function buildChart(canvasId, data, lineKey, barKey) {
     });
     if (Array.isArray(d[barKey])) {
       datasets.push({
-        label: `${repo} ${barKey === 'resolved_issues' ? 'resolved' : 'merged'}`,
+        label: `${repo} ${barLabel}`,
         data: d[barKey],
         backgroundColor: color + '66',
         borderColor: color,
