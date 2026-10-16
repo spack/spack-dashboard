@@ -89,10 +89,8 @@ def build_queries(repos: list[str], dates: list[str]) -> list[tuple[str, str]]:
     For each repo × item_type × snapshot date we need:
       open_i    : is:open created<=snapshot
       closed_i  : is:closed closed>snapshot created<=snapshot  (count still open at T)
-      resolved_i: count closed in the interval ending at snapshot
-      merged_i  : count merged in the interval ending at snapshot
-    The first snapshot uses a cumulative count up to that date, since there is no prior
-    interval to compare against. Subsequent snapshots use a windowed date range.
+      resolved_i: count closed in the week ending at snapshot
+      merged_i  : count merged in the week ending at snapshot
     Plus one current-count query per repo × item_type.
     """
     queries: list[tuple[str, str]] = []
@@ -100,7 +98,8 @@ def build_queries(repos: list[str], dates: list[str]) -> list[tuple[str, str]]:
         rk = repo_key(repo)
         for kind, type_filter in [("issue", "is:issue"), ("pr", "is:pr")]:
             for i, snap in enumerate(dates):
-                prev_snap = dates[i - 1] if i > 0 else None
+                # Window (prev_snap, snap]; the first snapshot uses the preceding week.
+                start = (date.fromisoformat(snap) - timedelta(days=6)).isoformat()
                 queries.append((
                     f"{rk}_{kind}_open_{i}",
                     f"repo:{repo} {type_filter} is:open created:<={snap}",
@@ -109,23 +108,18 @@ def build_queries(repos: list[str], dates: list[str]) -> list[tuple[str, str]]:
                     f"{rk}_{kind}_closed_{i}",
                     f"repo:{repo} {type_filter} is:closed closed:>{snap} created:<={snap}",
                 ))
+                # GitHub search ORs repeated qualifiers (closed:>A closed:<=B matches
+                # nearly everything), so use the inclusive range syntax A..B instead.
+                window = f"{start}..{snap}"
                 if kind == "issue":
-                    if prev_snap is None:
-                        query = f"repo:{repo} {type_filter} is:closed closed:<={snap}"
-                    else:
-                        query = f"repo:{repo} {type_filter} is:closed closed:>{prev_snap} closed:<={snap}"
                     queries.append((
                         f"{rk}_{kind}_resolved_{i}",
-                        query,
+                        f"repo:{repo} {type_filter} is:closed closed:{window}",
                     ))
                 else:
-                    if prev_snap is None:
-                        query = f"repo:{repo} {type_filter} merged:<={snap}"
-                    else:
-                        query = f"repo:{repo} {type_filter} merged:>{prev_snap} merged:<={snap}"
                     queries.append((
                         f"{rk}_{kind}_merged_{i}",
-                        query,
+                        f"repo:{repo} {type_filter} merged:{window}",
                     ))
             queries.append((
                 f"{rk}_{kind}_current",
