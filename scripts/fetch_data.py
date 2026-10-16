@@ -86,17 +86,20 @@ def weekly_dates(weeks: int = 26) -> list[str]:
 
 def build_queries(repos: list[str], dates: list[str]) -> list[tuple[str, str]]:
     """
-    For each repo × item_type × snapshot date we need two counts:
-      open_i  : is:open created<=snapshot          (still open today, created before T)
-      closed_i: is:closed closed>snapshot created<=snapshot  (closed after T → was open at T)
+    For each repo × item_type × snapshot date we need:
+      open_i    : is:open created<=snapshot
+      closed_i  : is:closed closed>snapshot created<=snapshot  (count still open at T)
+      resolved_i: count closed in the week ending at snapshot
+      merged_i  : count merged in the week ending at snapshot
     Plus one current-count query per repo × item_type.
-    Total: 2 repos × 2 types × 26 dates × 2 halves + 2 repos × 2 types × 1 = 216 queries.
     """
     queries: list[tuple[str, str]] = []
     for repo in repos:
         rk = repo_key(repo)
         for kind, type_filter in [("issue", "is:issue"), ("pr", "is:pr")]:
             for i, snap in enumerate(dates):
+                # Window (prev_snap, snap]; the first snapshot uses the preceding week.
+                start = (date.fromisoformat(snap) - timedelta(days=6)).isoformat()
                 queries.append((
                     f"{rk}_{kind}_open_{i}",
                     f"repo:{repo} {type_filter} is:open created:<={snap}",
@@ -105,6 +108,19 @@ def build_queries(repos: list[str], dates: list[str]) -> list[tuple[str, str]]:
                     f"{rk}_{kind}_closed_{i}",
                     f"repo:{repo} {type_filter} is:closed closed:>{snap} created:<={snap}",
                 ))
+                # GitHub search ORs repeated qualifiers (closed:>A closed:<=B matches
+                # nearly everything), so use the inclusive range syntax A..B instead.
+                window = f"{start}..{snap}"
+                if kind == "issue":
+                    queries.append((
+                        f"{rk}_{kind}_resolved_{i}",
+                        f"repo:{repo} {type_filter} is:closed closed:{window}",
+                    ))
+                else:
+                    queries.append((
+                        f"{rk}_{kind}_merged_{i}",
+                        f"repo:{repo} {type_filter} merged:{window}",
+                    ))
             queries.append((
                 f"{rk}_{kind}_current",
                 f"repo:{repo} {type_filter} is:open",
@@ -116,18 +132,24 @@ def assemble(repos: list[str], dates: list[str], counts: dict[str, int]) -> dict
     result: dict = {}
     for repo in repos:
         rk = repo_key(repo)
+        issue_closed = [counts[f"{rk}_issue_closed_{i}"] for i in range(len(dates))]
+        pr_closed = [counts[f"{rk}_pr_closed_{i}"] for i in range(len(dates))]
+        issue_resolved = [counts[f"{rk}_issue_resolved_{i}"] for i in range(len(dates))]
+        pr_merged = [counts[f"{rk}_pr_merged_{i}"] for i in range(len(dates))]
         open_issues = [
-            counts[f"{rk}_issue_open_{i}"] + counts[f"{rk}_issue_closed_{i}"]
+            counts[f"{rk}_issue_open_{i}"] + issue_closed[i]
             for i in range(len(dates))
         ]
         open_prs = [
-            counts[f"{rk}_pr_open_{i}"] + counts[f"{rk}_pr_closed_{i}"]
+            counts[f"{rk}_pr_open_{i}"] + pr_closed[i]
             for i in range(len(dates))
         ]
         result[repo] = {
             "dates":               dates,
             "open_issues":         open_issues,
             "open_prs":            open_prs,
+            "resolved_issues":     issue_resolved,
+            "merged_prs":          pr_merged,
             "current_open_issues": counts[f"{rk}_issue_current"],
             "current_open_prs":    counts[f"{rk}_pr_current"],
             "updated_at":          datetime.utcnow().isoformat() + "Z",

@@ -182,38 +182,58 @@ function buildProjectCharts(data) {
         </h2>
         <div class="project-charts">
           <div>
-            <div class="chart-subtitle">📈 Open Issues Over Time</div>
+            <div class="chart-subtitle">📈 Open Issues + Resolved</div>
             <div class="chart-wrapper"><canvas id="${repoId}-issues-chart"></canvas></div>
           </div>
           <div>
-            <div class="chart-subtitle">🔀 Open Pull Requests Over Time</div>
+            <div class="chart-subtitle">🔀 Open Pull Requests + Merged</div>
             <div class="chart-wrapper"><canvas id="${repoId}-prs-chart"></canvas></div>
           </div>
         </div>
       </div>
     `);
-    buildChart(`${repoId}-issues-chart`, { [repo]: d }, 'open_issues');
-    buildChart(`${repoId}-prs-chart`, { [repo]: d }, 'open_prs');
+    buildChart(`${repoId}-issues-chart`, { [repo]: d }, 'open_issues', 'resolved_issues', 'resolved');
+    buildChart(`${repoId}-prs-chart`, { [repo]: d }, 'open_prs', 'merged_prs', 'merged');
   }
 }
 
-function buildChart(canvasId, data, key) {
+function buildChart(canvasId, data, lineKey, barKey, barLabel) {
   const entries = Object.entries(data);
   if (!entries.length || !entries[0][1].dates?.length) return;
   const labels = entries[0][1].dates.map(fmtDate);
-  const datasets = entries.map(([repo, d]) => ({
-    label: repo,
-    data: d[key],
-    borderColor: REPO_COLORS[repo] || '#58a6ff',
-    backgroundColor: (REPO_COLORS[repo] || '#58a6ff') + '18',
-    fill: true,
-    tension: 0,
-    pointRadius: 2,
-    pointHoverRadius: 5,
-    borderWidth: 2,
-  }));
+  const datasets = [];
+
+  for (const [repo, d] of entries) {
+    const color = REPO_COLORS[repo] || '#58a6ff';
+    datasets.push({
+      label: `${repo} open`,
+      data: d[lineKey],
+      borderColor: color,
+      backgroundColor: color + '18',
+      fill: true,
+      tension: 0,
+      pointRadius: 2,
+      pointHoverRadius: 5,
+      borderWidth: 2,
+      type: 'line',
+    });
+    if (Array.isArray(d[barKey])) {
+      datasets.push({
+        label: `${repo} ${barLabel}`,
+        data: d[barKey],
+        backgroundColor: color + '66',
+        borderColor: color,
+        borderWidth: 1,
+        borderRadius: 4,
+        barPercentage: 0.8,
+        categoryPercentage: 0.9,
+        type: 'bar',
+      });
+    }
+  }
+
   new Chart(document.getElementById(canvasId), {
-    type: 'line',
+    type: 'bar',
     data: { labels, datasets },
     options: {
       responsive: true,
