@@ -116,18 +116,22 @@ def assemble(repos: list[str], dates: list[str], counts: dict[str, int]) -> dict
     result: dict = {}
     for repo in repos:
         rk = repo_key(repo)
+        issue_closed = [counts[f"{rk}_issue_closed_{i}"] for i in range(len(dates))]
+        pr_closed = [counts[f"{rk}_pr_closed_{i}"] for i in range(len(dates))]
         open_issues = [
-            counts[f"{rk}_issue_open_{i}"] + counts[f"{rk}_issue_closed_{i}"]
+            counts[f"{rk}_issue_open_{i}"] + issue_closed[i]
             for i in range(len(dates))
         ]
         open_prs = [
-            counts[f"{rk}_pr_open_{i}"] + counts[f"{rk}_pr_closed_{i}"]
+            counts[f"{rk}_pr_open_{i}"] + pr_closed[i]
             for i in range(len(dates))
         ]
         result[repo] = {
             "dates":               dates,
             "open_issues":         open_issues,
             "open_prs":            open_prs,
+            "resolved_issues":     issue_closed,
+            "merged_prs":          pr_closed,
             "current_open_issues": counts[f"{rk}_issue_current"],
             "current_open_prs":    counts[f"{rk}_pr_current"],
             "updated_at":          datetime.utcnow().isoformat() + "Z",
