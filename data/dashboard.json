@@ -56,7 +56,7 @@
       1327,
       1264,
       1167,
-      1114
+      1115
     ],
     "open_prs": [
       404,
@@ -85,7 +85,7 @@
       476,
       507,
       518,
-      535
+      536
     ],
     "resolved_issues": [
       19,
@@ -145,9 +145,9 @@
       6,
       9
     ],
-    "current_open_issues": 1114,
-    "current_open_prs": 535,
-    "updated_at": "2026-10-16T15:10:16.709967Z"
+    "current_open_issues": 1115,
+    "current_open_prs": 536,
+    "updated_at": "2026-10-16T20:43:09.276172Z"
   },
   "spack/spack-packages": {
     "dates": [
@@ -235,7 +235,7 @@
       359,
       400,
       443,
-      483
+      486
     ],
     "resolved_issues": [
       3,
@@ -293,10 +293,10 @@
       110,
       73,
       94,
-      73
+      80
     ],
     "current_open_issues": 99,
-    "current_open_prs": 483,
-    "updated_at": "2026-10-16T15:10:16.710032Z"
+    "current_open_prs": 486,
+    "updated_at": "2026-10-16T20:43:09.276241Z"
   }
 }
